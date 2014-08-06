@@ -1,0 +1,102 @@
+#!/bin/bash -e
+
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+
+case "$1" in
+  -v|--version)
+    version="$2"
+esac
+
+echo 'Installing ASE'
+tar -zxf $OPENSHIFT_ASE_DIR/versions/${OPENSHIFT_ASE_VERSION}/ASE${OPENSHIFT_ASE_VERSION}.tgz -C "${OPENSHIFT_ASE_DIR}/"
+echo 'ASE extracted'
+
+chmod 0700 $OPENSHIFT_ASE_DIR/ASE${version}
+chmod 0700 $OPENSHIFT_ASE_DIR/data
+
+# Build ASE configuration resource file with OpenShift Gear's IP and OPENSHIFT_ASE_DIR 
+cp ${OPENSHIFT_ASE_DIR}/versions/${version}/ose.rs.template ${OPENSHIFT_ASE_DIR}/tmp/ose.rs
+echo "sqlsrv.network_hostname_list: ${OPENSHIFT_ASE_DB_HOST}" >> ${OPENSHIFT_ASE_DIR}/tmp/ose.rs
+echo "sybinit.release_directory: ${OPENSHIFT_ASE_DIR}/ASE${version}" >> ${OPENSHIFT_ASE_DIR}/tmp/ose.rs
+echo "sqlsrv.master_device_physical_name: ${OPENSHIFT_ASE_DIR}/data/master.dat" >> ${OPENSHIFT_ASE_DIR}/tmp/ose.rs
+echo "sqlsrv.sybsystemprocs_device_physical_name: ${OPENSHIFT_ASE_DIR}/data/sproc.dat" >> ${OPENSHIFT_ASE_DIR}/tmp/ose.rs
+echo 'ASE resource file prepared'
+
+ASE_SERVER_NAME=$(sed -n -e '/sqlsrv.server_name:/s/^.*sqlsrv.server_name: \([^.*]*\).*$/\1/p' ${OPENSHIFT_ASE_DIR}/tmp/ose.rs)
+ASE_PASSWORD=$(sed -n -e '/sqlsrv.sa_password:/s/^.*sqlsrv.sa_password: \([^.*]*\).*$/\1/p' ${OPENSHIFT_ASE_DIR}/tmp/ose.rs)
+
+env_dir="${OPENSHIFT_ASE_DIR}/env"
+set_env_var 'ASE_SERVER_NAME' ${ASE_SERVER_NAME} $env_dir
+set_env_var 'ASE_PASSWORD' ${ASE_PASSWORD} $env_dir
+
+# Configure ASE database based on the resource file
+source "${OPENSHIFT_ASE_DIR}/versions/${version}/SYBASE.sh"
+${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/bin/srvbuildres -r ${OPENSHIFT_ASE_DIR}/tmp/ose.rs
+echo 'ASE configured'
+
+# Build BSRV backup server configuration resource file with OpenShift Gear's IP and OPENSHIFT_ASE_DIR 
+cp ${OPENSHIFT_ASE_DIR}/versions/${version}/bsrv.rs.template ${OPENSHIFT_ASE_DIR}/tmp/bsrv.rs
+echo "sqlsrv.network_hostname_list: ${OPENSHIFT_ASE_DB_HOST}" >> ${OPENSHIFT_ASE_DIR}/tmp/bsrv.rs
+echo "sybinit.release_directory: ${OPENSHIFT_ASE_DIR}/ASE${version}" >> ${OPENSHIFT_ASE_DIR}/tmp/bsrv.rs
+echo 'BSRV resource file prepared'
+BSRV_SERVER_NAME=$(sed -n -e '/bsrv.server_name:/s/^.*bsrv.server_name: \([^.*]*\).*$/\1/p' ${OPENSHIFT_ASE_DIR}/tmp/bsrv.rs)
+set_env_var 'BSRV_SERVER_NAME' ${BSRV_SERVER_NAME} $env_dir
+# Configure BSRV backup server based on the resource file
+source "${OPENSHIFT_ASE_DIR}/versions/${version}/SYBASE.sh"
+${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/bin/srvbuildres -r ${OPENSHIFT_ASE_DIR}/tmp/bsrv.rs
+echo 'BSRV backup server configured'
+
+# No user database will be created
+# Create a database
+#echo "Creating a database"
+#isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/scripts/installpubs2
+# create a 2nd database
+#isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/scripts/installpubs3
+#echo "Database created"
+
+# Prepare RUN_ASE_m
+cp ${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/install/RUN_ASE ${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/install/RUN_ASE_m
+sed -i '${/^$/d;}' ${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/install/RUN_ASE_m
+echo "-m \\" >> ${OPENSHIFT_ASE_DIR}/ASE${version}/${SYBASE_ASE}/install/RUN_ASE_m
+
+#env_dir="${OPENSHIFT_ASE_DIR}/env"
+#ASE_DATABASE_NAME="pubs2"
+#set_env_var 'ASE_DATABASE_NAME' ${ASE_DATABASE_NAME} $env_dir
+
+# Stop ASE database servers before license is accepted
+isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < "${OPENSHIFT_ASE_DIR}/versions/shared/stop.sql"
+
+source_command_line1="source \\"
+source_command_line2="${OPENSHIFT_ASE_DIR}/versions/${version}/SYBASE.sh"
+conn_command="isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME}"
+stop_command_line1="isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} \\"
+stop_command_line2="< \\"
+stop_command_line3="${OPENSHIFT_ASE_DIR}/versions/shared/stop.sql"
+source_command="source ${OPENSHIFT_ASE_DIR}/versions/${version}/SYBASE.sh"
+conn_command="isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME}"
+
+client_result ""
+client_result "============================="
+client_result "ASE ${version} database added.  Please make note of these credentials:"
+client_result ""
+#client_result "Database Name: ${ASE_DATABASE_NAME}"
+#client_result ""
+client_result "Connection Command:"
+client_result "${source_command_line1}"
+client_result "${source_command_line2}"
+client_result "${conn_command}"
+client_result "Stop Command:"
+client_result "${source_command_line1}"
+client_result "${source_command_line2}"
+client_result "${stop_command_line1}"
+client_result "${stop_command_line2}"
+client_result "${stop_command_line3}"
+client_result "============================="
+client_result ""
+
+cart_props "user=sa"
+cart_props "password=${ASE_PASSWORD}"
+cart_props "database_name=${ASE_DATABASE_NAME}"
+cart_props "connection_command=${source_command}; ${conn_command}"
+
+set_app_info "Connection Command: ${source_command}; ${conn_command}"

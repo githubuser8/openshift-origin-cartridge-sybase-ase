@@ -1,0 +1,14 @@
+#!/bin/bash -e
+
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+
+mkdir -p $OPENSHIFT_ASE_DIR/{data,tmp}
+
+case "$1" in
+  -v|--version)
+    version="$2"
+esac
+
+env_dir="${OPENSHIFT_ASE_DIR}/env"
+set_env_var 'OPENSHIFT_ASE_VERSION' $version $env_dir
+set_env_var 'SYBASE' ${OPENSHIFT_ASE_DIR}/ASE${version} $env_dir

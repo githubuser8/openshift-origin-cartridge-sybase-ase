@@ -1,0 +1,378 @@
+#!/bin/bash
+source $OPENSHIFT_CARTRIDGE_SDK_BASH
+source "${OPENSHIFT_ASE_DIR}/versions/${OPENSHIFT_ASE_VERSION}/SYBASE.sh"
+
+function check_license {
+# Display License File
+client_result "======= SAP License ========="
+while read -r line; do client_result "$line"; done < $OPENSHIFT_ASE_DIR/license/license.txt
+client_result "==== End of SAP License ====="
+client_result ""
+client_result "======= MUST READ ==========="
+client_result "You haven't accepted the license agreement,"
+client_result "thus the use of the cartridge is prohibited."
+client_result "-----------------------------"
+client_result "To indicate that you accept this license, "
+client_result "please set the ACCEPT_SAP_LICENSE_ASE variable to "Y" with command:"
+client_result "  rhc set-env ACCEPT_SAP_LICENSE_ASE=Y --app ${OPENSHIFT_APP_NAME}"
+client_result "then start the cartridge with command:"
+client_result "  rhc cartridge-start sybase-ase-${OPENSHIFT_ASE_VERSION} --app ${OPENSHIFT_APP_NAME}"
+client_result "============================="
+return 0
+}
+
+function _start_ase {
+  ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION}/${SYBASE_ASE}/install/RUN_${ASE_SERVER_NAME} &
+}
+
+function _start_bsrv {
+  ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION}/${SYBASE_ASE}/install/RUN_${BSRV_SERVER_NAME} &
+}
+
+function _start_ase_m {
+  ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION}/${SYBASE_ASE}/install/RUN_${ASE_SERVER_NAME}_m &
+}
+
+function _stop {
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < "${OPENSHIFT_ASE_DIR}/versions/shared/stop.sql"
+}
+
+function _stop_ase {
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < "${OPENSHIFT_ASE_DIR}/versions/shared/stop_ase.sql"
+}
+
+function _is_running {
+  PID=$(sed -n -e '/process id/s/^.*process id \([0-9]*\).*$/\1/p' ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION}/${SYBASE_ASE}/install/${ASE_SERVER_NAME}.log | tail -1)
+
+  kill -s 0 ${PID} > /dev/null 2>&1
+  if [[ $? != 0 ]]
+    then
+      return 1
+  fi
+  return 0
+}
+
+function wait_for_ase_availability {
+  for i in {1..30}; do
+    _is_running && return 0
+    sleep 1
+  done
+  return 1
+}
+
+function start {
+if [ ${ACCEPT_SAP_LICENSE_ASE} == Y ] || [ ${ACCEPT_SAP_LICENSE_ASE} == y ]; then
+  if ! _is_running; then
+    echo "Starting ASE"
+
+    _start_ase
+    wait_for_ase_availability || error "Could not start ASE" 70
+    _start_bsrv
+    sleep 30
+    echo "ASE started"
+  else
+    echo "ASE already running"
+  fi
+  return 0
+else
+  check_license
+fi
+}
+
+function start_ase {
+  if ! _is_running; then
+    echo "Starting ASE"
+
+    _start_ase
+    wait_for_ase_availability || error "Could not start ASE" 70
+    sleep 30
+    echo "ASE started"
+  else
+    echo "ASE already running"
+  fi
+
+  return 0
+}
+
+function start_m {
+  if ! _is_running; then
+    echo "Starting ASE with -m option"
+
+    _start_ase_m
+    wait_for_ase_availability || error "Could not start ASE" 70
+    sleep 30
+    echo "ASE started with -m option"
+  else
+    stop
+    _start_ase_m
+    wait_for_ase_availability || error "Could not start ASE" 70
+    sleep 30
+    echo "ASE started with -m option"
+
+  fi
+
+  return 0
+}
+
+function stop {
+  PID=$(sed -n -e '/process id/s/^.*process id \([0-9]*\).*$/\1/p' ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION}/${SYBASE_ASE}/install/${ASE_SERVER_NAME}.log | tail -1)
+  if _is_running; then
+    _stop ||
+      kill -9 ${PID}
+    if _is_running; then
+      error "Could not stop ASE" 70
+    else
+      echo "ASE stopped"
+    fi
+  else
+    echo "ASE already stopped"
+  fi
+  return 0
+}
+
+function stop_ase {
+  PID=$(sed -n -e '/process id/s/^.*process id \([0-9]*\).*$/\1/p' ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION}/${SYBASE_ASE}/install/${ASE_SERVER_NAME}.log | tail -1)
+  if _is_running; then
+    _stop_ase ||
+      kill -9 ${PID}
+    if _is_running; then
+      error "Could not stop ASE" 70
+    else
+      echo "ASE stopped"
+    fi
+  else
+    echo "ASE already stopped"
+  fi
+  return 0
+}
+
+function status {
+  if _is_running; then
+    client_result "ASE is running"
+  else
+    client_result "ASE is stopped"
+  fi
+
+  exit 0
+}
+
+function pre_snapshot {
+  start
+
+  echo "${OPENSHIFT_ASE_VERSION}" > $OPENSHIFT_DATA_DIR/ase_version
+#  echo "${ASE_SERVER_NAME}" > $OPENSHIFT_DATA_DIR/ase_server_name
+#  echo "${ASE_PASSWORD}" > $OPENSHIFT_DATA_DIR/ase_password
+#  echo "${ASE_DATABASE_NAME}" > $OPENSHIFT_DATA_DIR/ase_db_name
+#  echo "${BSRV_SERVER_NAME}" > $OPENSHIFT_DATA_DIR/bsrv_server_name
+
+  if [ -d ${OPENSHIFT_ASE_DIR}/ase-backup ]
+  then
+    rm -rf ${OPENSHIFT_ASE_DIR}/ase-backup
+  fi
+  mkdir ${OPENSHIFT_ASE_DIR}/ase-backup
+
+  # Create a dump.sql  
+  sysdblist=sysdblist
+  rm -f $sysdblist
+  userdblist=userdblist
+  rm -f $userdblist
+  dumpsql=dump.sql
+  rm -f $dumpsql
+
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/versions/shared/sysdblist.sql | tail -n+3 | head -n -2 > ${OPENSHIFT_ASE_DIR}/ase-backup/$sysdblist
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/versions/shared/userdblist.sql | tail -n+3 | head -n -2 > ${OPENSHIFT_ASE_DIR}/ase-backup/$userdblist
+
+  # generate user database schema
+  while read dbname
+  do
+    ddlgen -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} -D$dbname > ${OPENSHIFT_ASE_DIR}ase-backup/$dbname.out
+  done < "${OPENSHIFT_ASE_DIR}/ase-backup/$userdblist"
+
+  # generate dump files
+  while read dbname
+  do
+    echo "dump database $dbname to '${OPENSHIFT_ASE_DIR}ase-backup/$dbname.dmp'" >> ${OPENSHIFT_ASE_DIR}/ase-backup/$dumpsql
+  done < "${OPENSHIFT_ASE_DIR}/ase-backup/$sysdblist"
+  while read dbname
+  do
+    echo "dump database $dbname to '${OPENSHIFT_ASE_DIR}ase-backup/$dbname.dmp'" >> ${OPENSHIFT_ASE_DIR}/ase-backup/$dumpsql
+  done < "${OPENSHIFT_ASE_DIR}/ase-backup/$userdblist"
+  echo "go" >> ${OPENSHIFT_ASE_DIR}/ase-backup/$dumpsql
+  # Dump databases
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/ase-backup/$dumpsql
+
+  stop
+
+  cd ${OPENSHIFT_ASE_DIR}/
+  /bin/tar zcf ${OPENSHIFT_DATA_DIR}/ase-backup.tgz ase-backup/
+  # clean up
+  rm -rf ase-backup/
+
+}
+
+function pre_restore {
+return 0;
+}
+
+function post_restore {
+  if [ ! -f $OPENSHIFT_DATA_DIR/ase_version ]
+  then
+    if [ "$OPENSHIFT_ASE_VERSION" != "15.7" ]
+    then
+      warning "WARNING: ASE snapshot must have a file named ase_version containing software version in app-root/data"
+      return
+    else
+      old_version="15.7"
+    fi
+  else
+    old_version=$(< $OPENSHIFT_DATA_DIR/ase_version)
+  fi
+
+  if [ "$old_version" != "$OPENSHIFT_ASE_VERSION" ]
+  then
+    warning "WARNING: Restore skipped. Reason: ASE restore to version $OPENSHIFT_ASE_VERSION attempted from a different version: $old_version."
+    start
+    return
+  fi
+
+if [ -f $OPENSHIFT_DATA_DIR/ase-backup.tgz ]; then
+  start
+
+  env_dir="${OPENSHIFT_ASE_DIR}/env"
+  OPENSHIFT_ASE_VERSION=$(< $OPENSHIFT_DATA_DIR/ase_version)
+#  ASE_SERVER_NAME=$(< $OPENSHIFT_DATA_DIR/ase_server_name)
+#  ASE_DATABASE_NAME=$(< $OPENSHIFT_DATA_DIR/ase_db_name)
+#  set_env_var 'OPENSHIFT_ASE_VERSION' $OPENSHIFT_ASE_VERSION $env_dir
+#  set_env_var 'ASE_SERVER_NAME' ${ASE_SERVER_NAME} $env_dir
+#  set_env_var 'ASE_PASSWORD' ${ASE_PASSWORD} $env_dir
+#  set_env_var 'ASE_DATABASE_NAME' ${ASE_DATABASE_NAME} $env_dir
+#  set_env_var 'SYBASE' ${OPENSHIFT_ASE_DIR}/ASE${OPENSHIFT_ASE_VERSION} $env_dir
+
+  # Drop existing databases
+  mkdir ${OPENSHIFT_ASE_DIR}/restore
+  newdblist=newdblist
+  rm -f ${OPENSHIFT_ASE_DIR}/restore/$newdblist
+  dropsql=drop.sql
+  rm -f ${OPENSHIFT_ASE_DIR}/restore/$drop.sql
+
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/versions/shared/userdblist.sql | tail -n+3 | head -n -2 > ${OPENSHIFT_ASE_DIR}/restore/$newdblist
+
+  while read dbname
+  do
+    echo "drop database $dbname" >> ${OPENSHIFT_ASE_DIR}/restore/$dropsql
+  done < "${OPENSHIFT_ASE_DIR}/restore/$newdblist"
+  echo "go" >> ${OPENSHIFT_ASE_DIR}/restore/$dropsql
+  # Drop existing user databases
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/restore/$dropsql
+
+  # Prepare backup files
+  if [ -d ${OPENSHIFT_ASE_DIR}/ase-backup ]
+  then
+    rm -rf ${OPENSHIFT_ASE_DIR}/ase-backup
+  fi
+  cd ${OPENSHIFT_ASE_DIR}
+  /bin/tar zxf $OPENSHIFT_DATA_DIR/ase-backup.tgz
+  cd ${OPENSHIFT_ASE_DIR}/ase-backup
+
+  # Create user databases from the backup
+  userdblist=userdblist
+  while read dbname
+  do
+    isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}ase-backup/$dbname.out
+  done < "${OPENSHIFT_ASE_DIR}ase-backup/$userdblist"
+
+  stop_ase
+  start_m
+
+  loadmaster=loadmaster.sql
+  rm -f $loadmaster
+  echo "load database master from '${OPENSHIFT_ASE_DIR}ase-backup/master.dmp'" >> ${OPENSHIFT_ASE_DIR}/restore/$loadmaster
+  echo "go" >> ${OPENSHIFT_ASE_DIR}/restore/$loadmaster
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/restore/$loadmaster
+
+  # dataserver is stopped automatically after loadmaster
+  stop_ase
+
+  #ASE_PASSWORD=$(< $OPENSHIFT_DATA_DIR/ase_password)
+
+  start_ase
+
+  # Load databases
+  loadsql=load.sql
+  rm -f $loadsql
+  sysdblist=sysdblist
+  userdblist=userdblist
+  while read dbname
+  do
+    if [ "$dbname" != "master" ] 
+      then
+      echo "load database $dbname from '${OPENSHIFT_ASE_DIR}ase-backup/$dbname.dmp'" >> ${OPENSHIFT_ASE_DIR}/restore/$loadsql
+    fi
+  done < "${OPENSHIFT_ASE_DIR}/ase-backup/$sysdblist"
+  while read dbname
+  do
+    echo "load database $dbname from '${OPENSHIFT_ASE_DIR}ase-backup/$dbname.dmp'" >> ${OPENSHIFT_ASE_DIR}/restore/$loadsql
+  done < "${OPENSHIFT_ASE_DIR}/ase-backup/$userdblist"
+  echo "go" >> ${OPENSHIFT_ASE_DIR}/restore/$loadsql
+  # Load databases
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/restore/$loadsql
+ 
+  # Bring databases online
+  onlinesql=online.sql
+  rm -rf $onlinesql
+  echo "ONLINE DATABASE model" >> ${OPENSHIFT_ASE_DIR}/restore/$onlinesql
+  echo "ONLINE DATABASE sybsystemprocs" >> ${OPENSHIFT_ASE_DIR}/restore/$onlinesql
+  while read dbname
+  do
+    echo "ONLINE DATABASE $dbname" >> ${OPENSHIFT_ASE_DIR}/restore/$onlinesql
+  done < "${OPENSHIFT_ASE_DIR}/ase-backup/$userdblist"
+  echo "go" >> ${OPENSHIFT_ASE_DIR}/restore/$onlinesql
+  isql -Usa -P${ASE_PASSWORD} -S${ASE_SERVER_NAME} < ${OPENSHIFT_ASE_DIR}/restore/$onlinesql
+
+  # Clean Up
+  #cd ${OPENSHIFT_ASE_DIR}/
+  local dumpfiles=(
+    ${OPENSHIFT_ASE_DIR}/restore
+    ${OPENSHIFT_ASE_DIR}/ase-backup
+    $OPENSHIFT_DATA_DIR/ase-backup.tgz
+    $OPENSHIFT_DATA_DIR/ase_version
+  )
+  for file in "${dumpfiles[@]}"
+  do
+    rm -rf $file
+  done
+
+else 
+  echo "ASE restore attempted but no backup found!" 1>&2
+  echo "$OPENSHIFT_DATA_DIR/ase-backup.tgz does not exist" 1>&2
+fi
+}
+
+case "$1" in
+  start)
+    start
+  ;;
+  stop)
+    stop
+  ;;
+  status)
+    status
+  ;;
+  restart)
+    stop
+    start
+  ;;
+  pre-snapshot)
+    pre_snapshot
+  ;;
+  pre-restore)
+    pre_restore
+  ;;
+  post-restore)
+    post_restore
+  ;;
+  *)
+    echo 0
+  ;;
+esac
+

@@ -1,0 +1,17 @@
+sybinit.product: sqlsrv
+sqlsrv.server_name: ASE
+sqlsrv.sa_password: asedba
+sqlsrv.new_config: yes
+sqlsrv.do_add_server: yes
+sqlsrv.network_protocol_list: tcp
+sqlsrv.network_port_list: 18300
+sqlsrv.application_type: USE_DEFAULT
+sqlsrv.server_page_size: USE_DEFAULT
+sqlsrv.force_buildmaster: no
+sqlsrv.master_device_size: 60
+sqlsrv.master_database_size: 40
+sqlsrv.errorlog: USE_DEFAULT
+sqlsrv.do_upgrade: no
+sqlsrv.sybsystemprocs_device_size: 160
+sqlsrv.sybsystemprocs_database_size: 160
+sqlsrv.default_backup_server: BSRV

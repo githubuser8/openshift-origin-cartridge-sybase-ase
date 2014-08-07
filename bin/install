@@ -8,6 +8,9 @@ case "$1" in
 esac
 
 echo 'Installing ASE'
+mkdir -p $OPENSHIFT_ASE_DIR/versions/${OPENSHIFT_ASE_VERSION}/
+cd $OPENSHIFT_ASE_DIR/versions/${OPENSHIFT_ASE_VERSION}/
+wget http://d1cuw2q49dpd0p.cloudfront.net/Red+Hat+OpenShift/ASE15.7.tgz
 tar -zxf $OPENSHIFT_ASE_DIR/versions/${OPENSHIFT_ASE_VERSION}/ASE${OPENSHIFT_ASE_VERSION}.tgz -C "${OPENSHIFT_ASE_DIR}/"
 echo 'ASE extracted'
 

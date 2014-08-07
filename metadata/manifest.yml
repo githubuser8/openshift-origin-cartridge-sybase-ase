@@ -4,7 +4,7 @@ Architecture: noarch
 Cartridge-Short-Name: ASE
 Cartridge-Version:    '0.0.1'
 Compatible-Versions:   [0.0.1]
-Cartridge-Vendor:     redhat
+Cartridge-Vendor:     sap
 Display-Name: SAP ASE 15.7 SP100
 Description: "Adaptive Server Enterprise (ASE) is a highly scalable, high-performance database software engine"
 Version:   '15.7'

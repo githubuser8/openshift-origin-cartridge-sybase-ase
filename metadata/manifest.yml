@@ -8,6 +8,7 @@ Cartridge-Vendor:     redhat
 Display-Name: SAP ASE 15.7 SP100
 Description: "Adaptive Server Enterprise (ASE) is a highly scalable, high-performance database software engine"
 Version:   '15.7'
+Source-Url: git://github.com/githubuser8/openshift-origin-cartridge-sybase-ase.git
 Versions:  ['15.7']
 License:   Developer License
 Vendor:    SAP Sybase
